@@ -10,7 +10,7 @@ const DATA_DIR = path.join(ROOT, 'data');
 const STORE_FILE = path.join(DATA_DIR, 'store.json');
 const SERVER_ROOT = path.resolve(process.env.NIXFLOW_SERVER_ROOT || path.join(DATA_DIR, 'server-files'));
 const SESSION_SECRET = process.env.NIXFLOW_SESSION_SECRET || 'change-this-session-secret-before-production';
-const OWNER_USERNAME = process.env.OWNER_USERNAME || 'marr';
+const OWNER_USERNAME = process.env.OWNER_USERNAME || 'marrspace';
 const OWNER_PASSWORD = process.env.OWNER_INITIAL_PASSWORD || 'marnull';
 const OWNER_LOGIN_TOKEN = process.env.OWNER_LOGIN_TOKEN || OWNER_PASSWORD;
 const isProd = process.env.NODE_ENV === 'production';
