@@ -12,6 +12,7 @@ const SERVER_ROOT = path.resolve(process.env.NIXFLOW_SERVER_ROOT || path.join(DA
 const SESSION_SECRET = process.env.NIXFLOW_SESSION_SECRET || 'change-this-session-secret-before-production';
 const OWNER_USERNAME = process.env.OWNER_USERNAME || 'marr';
 const OWNER_PASSWORD = process.env.OWNER_INITIAL_PASSWORD || 'marnull';
+const OWNER_LOGIN_TOKEN = process.env.OWNER_LOGIN_TOKEN || OWNER_PASSWORD;
 const isProd = process.env.NODE_ENV === 'production';
 const COOKIE = 'nixflow_session';
 const PTERO_URL = String(process.env.PTERODACTYL_URL || '').replace(/\/$/, '');
@@ -54,7 +55,7 @@ function readSession(req) {
 }
 function defaultStore() {
   return {
-    users: [{ id: 'usr_owner', username: OWNER_USERNAME, passwordHash: hashPassword(OWNER_PASSWORD), role: 'owner', createdAt: now() }],
+    users: [{ id: 'usr_owner', username: OWNER_USERNAME, email: '', whatsapp: '', passwordHash: hashPassword(OWNER_PASSWORD), secretHash: hashPassword(OWNER_LOGIN_TOKEN), role: 'owner', status: 'active', createdAt: now() }],
     settings: { qris: { enabled: false, merchantName: '', qrImageData: '', instructions: 'Bayar sesuai nominal. Upload bukti hanya melalui kanal resmi.' }, server: { displayName: 'NixFlow Managed Node', provider: 'not-configured', status: 'offline' } },
     servers: [],
     audit: [],
@@ -94,13 +95,27 @@ app.use(express.json({ limit: '2mb' }));
 app.use(express.static(path.join(ROOT, 'dist')));
 
 const attempts = new Map();
+function setSession(res, user) { res.cookie(COOKIE, createSession(user), { httpOnly: true, secure: isProd, sameSite: 'strict', path: '/', maxAge: 43200000 }); }
+function publicUser(user) { return { username: user.username, email: user.email || undefined, role: user.role, status: user.status || 'active' }; }
 app.post('/api/auth/login', (req, res) => {
   const ip = req.ip || 'unknown'; const record = attempts.get(ip) || { count: 0, reset: Date.now() + 60000 };
   if (record.reset < Date.now()) { record.count = 0; record.reset = Date.now() + 60000; }
   if (record.count >= 8) return res.status(429).json({ error: 'TOO_MANY_ATTEMPTS' });
-  const { username, password } = req.body || {}; const user = store.users.find(u => u.username === String(username || '').trim());
-  if (!user || !verifyPassword(String(password || ''), user.passwordHash)) { record.count++; attempts.set(ip, record); console.warn('[auth] login_failed', { username: String(username || '').trim().slice(0, 80), ip, at: now() }); return res.status(401).json({ error: 'INVALID_CREDENTIALS' }); }
-  attempts.delete(ip); res.cookie(COOKIE, createSession(user), { httpOnly: true, secure: isProd, sameSite: 'strict', path: '/', maxAge: 43200000 }); audit(user.username, 'auth.login', { ip }); console.info('[auth] login_success', { username: user.username, ip, at: now() }); res.json({ user: { username: user.username, role: user.role } });
+  const { identifier, token, username, password } = req.body || {}; const lookup = String(identifier || username || '').trim().toLowerCase(); const credential = String(token || password || ''); const user = store.users.find(u => u.username.toLowerCase() === lookup || String(u.email || '').toLowerCase() === lookup);
+  const tokenOk = user && user.status !== 'blocked' && user.status !== 'disabled' && ((user.secretHash && verifyPassword(credential, user.secretHash)) || (!token && verifyPassword(credential, user.passwordHash)));
+  if (!tokenOk) { record.count++; attempts.set(ip, record); console.warn('[auth] login_failed', { identifier: lookup.slice(0, 80), ip, at: now() }); return res.status(401).json({ error: 'INVALID_CREDENTIALS' }); }
+  attempts.delete(ip); setSession(res, user); audit(user.username, 'auth.login', { ip, method: token ? 'secret_token' : 'legacy_password' }); console.info('[auth] login_success', { username: user.username, ip, at: now() }); res.json({ user: publicUser(user) });
+});
+app.post('/api/auth/register', (req, res) => {
+  const { username, email, whatsapp, password, confirmPassword } = req.body || {};
+  const name = String(username || '').trim(); const mail = String(email || '').trim().toLowerCase(); const phone = String(whatsapp || '').trim();
+  if (!/^[a-zA-Z0-9_-]{3,32}$/.test(name)) return res.status(400).json({ error: 'INVALID_USERNAME' });
+  if (!/^.+@gmail\.com$/.test(mail)) return res.status(400).json({ error: 'GMAIL_REQUIRED' });
+  if (!/^\+?[0-9][0-9 ()-]{7,24}$/.test(phone)) return res.status(400).json({ error: 'INVALID_WHATSAPP' });
+  if (String(password || '').length < 8 || password !== confirmPassword) return res.status(400).json({ error: 'PASSWORD_MISMATCH_OR_SHORT' });
+  if (store.users.some(u => u.username.toLowerCase() === name.toLowerCase() || String(u.email || '').toLowerCase() === mail || u.whatsapp === phone)) return res.status(409).json({ error: 'ACCOUNT_ALREADY_EXISTS' });
+  const secretKey = String(crypto.randomInt(1000, 10000)); const user = { id: `usr_${crypto.randomUUID()}`, username: name, email: mail, whatsapp: phone, passwordHash: hashPassword(password), secretHash: hashPassword(secretKey), role: 'user', status: 'active', createdAt: now() };
+  store.users.push(user); audit(user.username, 'account.created', { role: 'user' }); setSession(res, user); console.info('[auth] account_created', { username: user.username, ip: req.ip, at: now() }); res.status(201).json({ user: publicUser(user), secretKey });
 });
 app.post('/api/auth/logout', requireAuth, (req, res) => { audit(req.user.username, 'auth.logout'); res.clearCookie(COOKIE, { httpOnly: true, secure: isProd, sameSite: 'strict', path: '/' }); res.json({ ok: true }); });
 app.get('/api/auth/me', requireAuth, (req, res) => res.json({ user: { username: req.user.username, role: req.user.role } }));
