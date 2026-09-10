@@ -10,19 +10,7 @@ High-End Web Application untuk pengelolaan server Pterodactyl, topup saldo NX, p
 
 ## Akun Login Bawaan (Default Credentials)
 
-### 1. Owner (Master Control)
-- **Username:** `marr`
-- **Password:** `marrnull`
-- **Secret Key:** `8899`
-- **Role:** Owner (Kontrol penuh Pterodactyl, approval top-up, kelola paket & user)
-
-### 2. Admin Reseller
-- **Username:** `yowtech`
-- **Password:** `yownull`
-- **Secret Key:** `1234`
-- **Role:** Admin (Pembuatan user panel Pterodactyl seharga 500 NX/user)
-
-### 3. User Biasa (Demo)
+### User Biasa (Demo)
 - **Username:** `userdemo`
 - **Password:** `user123`
 - **Secret Key:** `7777`
