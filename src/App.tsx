@@ -1,106 +1,13 @@
-import React, { useState } from 'react';
-import { AppProvider, useApp } from './AppContext';
-import { Navbar } from './components/Navbar';
-import { BottomNav } from './components/BottomNav';
-import { UserDashboard } from './components/UserDashboard';
-import { ShopCatalog } from './components/ShopCatalog';
-import { TopupSection } from './components/TopupSection';
-import { AdminPanelSection } from './components/AdminPanelSection';
-import { OwnerSection } from './components/OwnerSection';
-import { SupportSection } from './components/SupportSection';
-import { AuthModal } from './components/AuthModal';
+import { useEffect, useState } from 'react';
+import { Activity, CheckCircle2, ChevronRight, CircleStop, File, Folder, KeyRound, LogOut, Play, QrCode, RefreshCw, RotateCcw, Server, Settings2, ShieldCheck, Terminal, Trash2, Upload, WifiOff } from 'lucide-react';
 
-const MainApp: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<string>('dashboard');
-  const [isAuthOpen, setIsAuthOpen] = useState<boolean>(false);
-  const { currentUser } = useApp();
-
-  return (
-    <div className="min-h-screen flex flex-col bg-[#07090f] text-slate-100 pb-20 md:pb-10 font-['Plus_Jakarta_Sans',sans-serif]">
-      
-      {/* Top Navigation */}
-      <Navbar 
-        activeTab={activeTab} 
-        setActiveTab={setActiveTab} 
-        onOpenAuth={() => setIsAuthOpen(true)} 
-      />
-
-      {/* Main Content Area */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        
-        {/* Banner Alert for Blocked User */}
-        {currentUser.status === 'blocked' && (
-          <div className="mb-6 p-4 rounded-2xl bg-red-500/15 border border-red-500/30 text-red-300 text-xs font-semibold flex items-center justify-between">
-            <span>Akun Anda saat ini dinonaktifkan/diblokir oleh Owner. Anda tidak dapat melakukan order, renew, atau upgrade.</span>
-          </div>
-        )}
-
-        {/* Tab Routing */}
-        {activeTab === 'dashboard' && (
-          <UserDashboard 
-            onNavigateShop={() => setActiveTab('shop')} 
-            onNavigateTopup={() => setActiveTab('topup')} 
-          />
-        )}
-
-        {activeTab === 'shop' && (
-          <ShopCatalog 
-            onSuccessBuy={() => setActiveTab('dashboard')} 
-          />
-        )}
-
-        {activeTab === 'topup' && (
-          <TopupSection />
-        )}
-
-        {activeTab === 'admin_panel' && (currentUser.role === 'admin' || currentUser.role === 'owner') && (
-          <AdminPanelSection />
-        )}
-
-        {activeTab === 'owner' && currentUser.role === 'owner' && (
-          <OwnerSection />
-        )}
-
-        {activeTab === 'support' && (
-          <SupportSection />
-        )}
-
-      </main>
-
-      {/* Footer (Desktop) */}
-      <footer className="hidden md:block border-t border-white/[0.05] py-6 text-center text-xs text-slate-500">
-        <div className="max-w-7xl mx-auto px-4 flex items-center justify-between">
-          <p>© 2026 Nixflow Cloud Platform • Powered by MarrSpace & Yowtech</p>
-          <div className="flex items-center gap-4 text-slate-400">
-            <span>Single Pterodactyl Integration</span>
-            <span>•</span>
-            <span>Ledger-Safe Atomic Balance</span>
-          </div>
-        </div>
-      </footer>
-
-      {/* Mobile Android-Optimized Bottom Nav */}
-      <BottomNav 
-        activeTab={activeTab} 
-        setActiveTab={setActiveTab} 
-      />
-
-      {/* Auth Modal */}
-      <AuthModal 
-        isOpen={isAuthOpen} 
-        onClose={() => setIsAuthOpen(false)} 
-      />
-
-    </div>
-  );
-};
-
-export const App: React.FC = () => {
-  return (
-    <AppProvider>
-      <MainApp />
-    </AppProvider>
-  );
-};
-
-export default App;
+type User={username:string;role:string}; type Overview={settings:any;servers:any[];payments:any[];audit:any[]};
+const api=async(url:string,opt:RequestInit={})=>{const r=await fetch(url,{credentials:'include',headers:{'Content-Type':'application/json',...(opt.headers||{})},...opt});const b=await r.json().catch(()=>({}));if(!r.ok)throw Error(b.error||'REQUEST_FAILED');return b};
+function Login({onLogin}:{onLogin:(u:User)=>void}){const[username,setUsername]=useState(''),[password,setPassword]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false);const submit=async(e:React.FormEvent)=>{e.preventDefault();setBusy(true);setError('');try{const r=await api('/api/auth/login',{method:'POST',body:JSON.stringify({username,password})});onLogin(r.user)}catch(e:any){setError(e.message==='INVALID_CREDENTIALS'?'Username atau password salah.':'Login gagal.')}finally{setBusy(false)}};return <main className="login-shell"><div className="login-card"><div className="brand-mark">N</div><p className="eyebrow">NIXFLOW / PRIVATE CONTROL PLANE</p><h1>Masuk ke panel operasi.</h1><p className="muted">Session cookie httpOnly melindungi akses. URL provider dan secret tidak pernah dikirim ke browser.</p><form onSubmit={submit}><label>Username<input autoComplete="username" value={username} onChange={e=>setUsername(e.target.value)} required/></label><label>Password<input autoComplete="current-password" type="password" value={password} onChange={e=>setPassword(e.target.value)} required/></label>{error&&<div className="error">{error}</div>}<button className="primary full" disabled={busy}>{busy?'Memverifikasi…':'Masuk aman'} <ChevronRight size={17}/></button></form><div className="security-note"><ShieldCheck size={16}/> Owner-only MVP • no demo data</div></div></main>}
+function Card({title,icon,children,action}:{title:string;icon:React.ReactNode;children:React.ReactNode;action?:React.ReactNode}){return <section className="card"><div className="card-head"><div className="section-title">{icon}<h2>{title}</h2></div>{action}</div>{children}</section>}
+export default function App(){const[user,setUser]=useState<User|null>(null),[data,setData]=useState<Overview|null>(null),[tab,setTab]=useState('Overview'),[notice,setNotice]=useState(''),[files,setFiles]=useState<any[]>([]),[filePath,setFilePath]=useState('.'),[startup,setStartup]=useState({command:'node index.js',image:'node:20-alpine'});const refresh=async()=>{try{const m=await api('/api/auth/me');setUser(m.user);const o=await api('/api/overview');setData(o);setStartup(o.settings.server.startup||startup)}catch{setUser(null)}};useEffect(()=>{refresh()},[]);useEffect(()=>{if(tab==='Files'&&user)api(`/api/files?path=${encodeURIComponent(filePath)}`).then(r=>setFiles(r.entries)).catch(()=>setFiles([]))},[tab,filePath,user]);const flash=(x:string)=>{setNotice(x);setTimeout(()=>setNotice(''),3200)},logout=async()=>{await api('/api/auth/logout',{method:'POST'}).catch(()=>{});setUser(null)};if(!user)return <Login onLogin={u=>{setUser(u);refresh()}}/>;const nav=[['Overview',Activity],['Files',File],['Console',Terminal],['Startup',Settings2],['Payments',QrCode]] as const;const action=async(name:string)=>{try{await api('/api/server/action',{method:'POST',body:JSON.stringify({action:name})});await refresh();flash(`Server ${name} queued melalui control plane.`)}catch(e:any){flash(`Aksi ditolak: ${e.message}`)}};return <div className="app-shell"><aside><div className="side-brand"><div className="brand-mark small">N</div><div><strong>NIXFLOW</strong><span>operations</span></div></div><div className="side-label">CONTROL PLANE</div><nav>{nav.map(([label,Icon])=><button key={label} className={tab===label?'nav active':'nav'} onClick={()=>setTab(label)}><Icon size={17}/>{label}</button>)}</nav><div className="side-bottom"><div className="connection"><span className="dot"/> local API protected</div><button className="nav logout" onClick={logout}><LogOut size={17}/>Keluar</button></div></aside><main className="workspace"><header><div><p className="eyebrow">OWNER WORKSPACE / {tab.toUpperCase()}</p><h1>{tab==='Overview'?'Command center.':tab}</h1></div><div className="header-user"><span className="avatar">{user.username[0].toUpperCase()}</span>@{user.username}</div></header>{notice&&<div className="notice"><CheckCircle2 size={17}/>{notice}</div>}{tab==='Overview'&&<Overview data={data} action={action} setTab={setTab}/>} {tab==='Files'&&<Files files={files} path={filePath} setPath={setFilePath} flash={flash}/>} {tab==='Console'&&<Console flash={flash}/>} {tab==='Startup'&&<Startup startup={startup} setStartup={setStartup} flash={flash}/>} {tab==='Payments'&&<Payments data={data} refresh={refresh} flash={flash}/>}</main></div>}
+function Overview({data,action,setTab}:{data:Overview|null;action:(x:string)=>void;setTab:(x:string)=>void}){const s=data?.settings.server,b=data?.settings.baileys;return <div className="content-grid"><div className="hero card"><div><p className="eyebrow cyan">PRODUCTION MVP</p><h2>Semua kontrol, satu permukaan.</h2><p className="muted max">File, startup, operasi server, pembayaran, dan status Baileys lewat API internal. Tidak ada URL provider atau API key di frontend.</p></div><div className="hero-orbit"><Server size={42}/><span className="pulse"/></div></div><div className="stat-row"><div className="stat card"><span>NODE STATUS</span><strong className={s?.status==='online'?'green':'amber'}>{s?.status||'offline'}</strong><small>{s?.provider||'provider belum dikonfigurasi'}</small></div><div className="stat card"><span>BAILEYS</span><strong>{b?.status||'disconnected'}</strong><small>session status only</small></div><div className="stat card"><span>PAYMENTS</span><strong>{data?.payments?.length||0}</strong><small>records tersimpan</small></div></div><Card title="Server operations" icon={<Server size={18}/>} action={<button className="ghost" onClick={()=>setTab('Startup')}>Manage startup <ChevronRight size={15}/></button>}><div className="server-row"><div><strong>{s?.displayName||'Managed node'}</strong><p className="muted">Aksi dibatasi allowlist dan dicatat ke audit log.</p></div><div className="actions"><button className="success" onClick={()=>action('start')}><Play size={15}/>Start</button><button className="warning" onClick={()=>action('restart')}><RotateCcw size={15}/>Restart</button><button className="danger" onClick={()=>action('stop')}><CircleStop size={15}/>Stop</button></div></div></Card><Card title="Baileys session" icon={<WifiOff size={18}/>}><div className="inline-between"><div><strong>{b?.status||'disconnected'}</strong><p className="muted">QR dan auth state tidak disimpan di browser. Worker Baileys terpisah memakai encrypted session storage.</p></div><button className="ghost" onClick={()=>setTab('Console')}>Open controls <ChevronRight size={15}/></button></div></Card></div>}
+function Files({files,path,setPath,flash}:any){const[folder,setFolder]=useState(''),remove=async(name:string)=>{try{await api('/api/files',{method:'DELETE',body:JSON.stringify({path:path==='.'?name:`${path}/${name}`})});flash('Item dihapus.');setPath(path)}catch(e:any){flash(e.message)}},mkdir=async()=>{if(!folder)return;await api('/api/files/folder',{method:'POST',body:JSON.stringify({path:path==='.'?folder:`${path}/${folder}`})});setFolder('');setPath(path);flash('Folder dibuat.')};return <div className="content-grid"><Card title="File manager" icon={<File size={18}/>} action={<span className="path-chip">/{path}</span>}><div className="toolbar"><input value={folder} onChange={e=>setFolder(e.target.value)} placeholder="new folder"/><button className="ghost" onClick={mkdir}>Create folder</button><button className="ghost" onClick={()=>setPath(path)}><RefreshCw size={15}/>Refresh</button></div><div className="file-list">{path!=='.'&&<button className="file-item" onClick={()=>setPath(path.split('/').slice(0,-1).join('/')||'.')}><Folder size={17}/>..</button>}{files.map((f:any)=><div className="file-item" key={f.name}><button onClick={()=>f.type==='directory'&&setPath(path==='.'?f.name:`${path}/${f.name}`)}><span className="file-icon">{f.type==='directory'?<Folder size={17}/>:<File size={17}/>}</span>{f.name}</button><span className="file-meta">{f.size?`${f.size} bytes`:'directory'} <button className="icon-danger" onClick={()=>remove(f.name)}><Trash2 size={15}/></button></span></div>)}{!files.length&&<div className="empty">Server sandbox kosong. Ini bukan demo data.</div>}</div></Card><div className="side-note"><ShieldCheck size={19}/><strong>Sandboxed paths</strong><p>Path traversal, root deletion, dan arbitrary filesystem access diblokir backend.</p></div></div>}
+function Console({flash}:{flash:(x:string)=>void}){const[command,setCommand]=useState(''),[lines,setLines]=useState(['NixFlow console ready.','Only managed actions are accepted. Shell execution is disabled by design.']);const run=()=>{if(!command.trim())return;setLines(x=>[...x,`> ${command}`,'Command rejected: arbitrary shell is disabled. Use Server Operations or Startup.']);setCommand('');flash('Arbitrary shell execution diblokir.')};return <div className="content-grid"><Card title="Safe console" icon={<Terminal size={18}/>}><div className="terminal"><div className="terminal-lines">{lines.map((x,i)=><div key={i}>{x}</div>)}</div><div className="terminal-input"><span>$</span><input value={command} onChange={e=>setCommand(e.target.value)} onKeyDown={e=>e.key==='Enter'&&run()} placeholder="managed command…"/><button onClick={run}>Run</button></div></div></Card><div className="side-note"><KeyRound size={19}/><strong>Why no raw shell?</strong><p>Panel web tidak boleh menjadi remote shell. Kontrol produksi harus allowlist, audited, dan dijalankan worker/provider adapter.</p></div></div>}
+function Startup({startup,setStartup,flash}:any){const save=async()=>{try{const r=await api('/api/server/startup',{method:'POST',body:JSON.stringify(startup)});setStartup(r.startup);flash('Startup settings disimpan.')}catch(e:any){flash(e.message)}};return <div className="content-grid"><Card title="Startup configuration" icon={<Settings2 size={18}/>}><label>Container image<input value={startup.image} onChange={e=>setStartup({...startup,image:e.target.value})}/></label><label>Startup command<input value={startup.command} onChange={e=>setStartup({...startup,command:e.target.value})}/></label><p className="muted">Backend menolak shell metacharacters dan membatasi panjang command.</p><button className="primary" onClick={save}>Save startup</button></Card><div className="side-note"><Activity size={19}/><strong>Provider adapter</strong><p>Untuk node remote, isi adapter Pterodactyl di environment server. Secret tidak pernah masuk payload frontend.</p></div></div>}
+function Payments({data,refresh,flash}:any){const q=data?.settings.qris,[form,setForm]=useState(q||{enabled:false,merchantName:'',instructions:''}),[amount,setAmount]=useState(''),[ref,setRef]=useState('');const save=async()=>{try{await api('/api/settings/qris',{method:'PUT',body:JSON.stringify(form)});await refresh();flash('Pengaturan QRIS diperbarui.')}catch(e:any){flash(e.message)}},create=async()=>{try{await api('/api/payments',{method:'POST',body:JSON.stringify({amount,reference:ref})});setAmount('');setRef('');await refresh();flash('Payment record dibuat.')}catch(e:any){flash(e.message)}};const upload=(e:React.ChangeEvent<HTMLInputElement>)=>{const f=e.target.files?.[0];if(!f)return;const reader=new FileReader();reader.onload=()=>setForm({...form,qrImageData:reader.result});reader.readAsDataURL(f)};return <div className="content-grid"><Card title="QRIS settings" icon={<QrCode size={18}/>}><label className="switchline"><input type="checkbox" checked={Boolean(form.enabled)} onChange={e=>setForm({...form,enabled:e.target.checked})}/> Enable QRIS payment</label><label>Merchant name<input value={form.merchantName||''} onChange={e=>setForm({...form,merchantName:e.target.value})} placeholder="Nama merchant"/></label><label>Instructions<textarea value={form.instructions||''} onChange={e=>setForm({...form,instructions:e.target.value})}/></label><label className="upload"><Upload size={16}/> Upload QR image<input type="file" accept="image/png,image/jpeg" onChange={upload}/></label>{form.qrImageData&&<img className="qr-preview" src={form.qrImageData}/>}<button className="primary" onClick={save}>Save QRIS</button></Card><Card title="Record payment" icon={<CheckCircle2 size={18}/>}><label>Amount (IDR)<input type="number" value={amount} onChange={e=>setAmount(e.target.value)} placeholder="25000"/></label><label>Reference<input value={ref} onChange={e=>setRef(e.target.value)} placeholder="customer reference"/></label><button className="ghost" onClick={create}>Create pending record</button><div className="payment-list">{(data?.payments||[]).map((p:any)=><div key={p.id}><strong>Rp {Number(p.amount).toLocaleString('id-ID')}</strong><span>{p.status} · {p.username}</span></div>)}</div></Card></div>}

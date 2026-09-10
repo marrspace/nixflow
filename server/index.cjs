@@ -1,0 +1,124 @@
+const express = require('express');
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+
+const app = express();
+const PORT = Number(process.env.PORT || 8787);
+const ROOT = path.resolve(__dirname, '..');
+const DATA_DIR = path.join(ROOT, 'data');
+const STORE_FILE = path.join(DATA_DIR, 'store.json');
+const SERVER_ROOT = path.resolve(process.env.NIXFLOW_SERVER_ROOT || path.join(DATA_DIR, 'server-files'));
+const SESSION_SECRET = process.env.NIXFLOW_SESSION_SECRET || 'change-this-session-secret-before-production';
+const OWNER_USERNAME = process.env.OWNER_USERNAME || 'marr';
+const OWNER_PASSWORD = process.env.OWNER_INITIAL_PASSWORD || 'marnull';
+const isProd = process.env.NODE_ENV === 'production';
+const COOKIE = 'nixflow_session';
+const PTERO_URL = String(process.env.PTERODACTYL_URL || '').replace(/\/$/, '');
+const PTERO_KEY = process.env.PTERODACTYL_CLIENT_API_KEY || '';
+const PTERO_SERVER = process.env.PTERODACTYL_SERVER_IDENTIFIER || '';
+const pteroConfigured = Boolean(PTERO_URL && PTERO_KEY && PTERO_SERVER);
+
+fs.mkdirSync(DATA_DIR, { recursive: true });
+fs.mkdirSync(SERVER_ROOT, { recursive: true });
+
+function now() { return new Date().toISOString(); }
+function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
+  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+  return `${salt}:${hash}`;
+}
+function verifyPassword(password, stored) {
+  const [salt, expected] = String(stored || '').split(':');
+  if (!salt || !expected) return false;
+  const actual = crypto.scryptSync(password, salt, 64).toString('hex');
+  return crypto.timingSafeEqual(Buffer.from(actual, 'hex'), Buffer.from(expected, 'hex'));
+}
+function sign(value) {
+  return crypto.createHmac('sha256', SESSION_SECRET).update(value).digest('base64url');
+}
+function createSession(user) {
+  const payload = Buffer.from(JSON.stringify({ id: user.id, exp: Date.now() + 1000 * 60 * 60 * 12 })).toString('base64url');
+  return `${payload}.${sign(payload)}`;
+}
+function readSession(req) {
+  const raw = req.headers.cookie?.split(';').map(v => v.trim()).find(v => v.startsWith(`${COOKIE}=`))?.slice(COOKIE.length + 1);
+  if (!raw) return null;
+  const [payload, signature] = raw.split('.');
+  if (!payload || !signature || !crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(sign(payload)))) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(payload, 'base64url').toString());
+    if (!parsed.exp || parsed.exp < Date.now()) return null;
+    return parsed;
+  } catch { return null; }
+}
+function defaultStore() {
+  return {
+    users: [{ id: 'usr_owner', username: OWNER_USERNAME, passwordHash: hashPassword(OWNER_PASSWORD), role: 'owner', createdAt: now() }],
+    settings: { qris: { enabled: false, merchantName: '', qrImageData: '', instructions: 'Bayar sesuai nominal. Upload bukti hanya melalui kanal resmi.' }, server: { displayName: 'NixFlow Managed Node', provider: 'not-configured', status: 'offline' } },
+    servers: [],
+    audit: [],
+    payments: [],
+    baileys: { status: 'disconnected', phone: '', lastEventAt: null, qrAvailable: false }
+  };
+}
+function loadStore() {
+  if (!fs.existsSync(STORE_FILE)) { const fresh = defaultStore(); fs.writeFileSync(STORE_FILE, JSON.stringify(fresh, null, 2)); return fresh; }
+  try { return JSON.parse(fs.readFileSync(STORE_FILE, 'utf8')); } catch { return defaultStore(); }
+}
+let store = loadStore();
+function saveStore() { fs.writeFileSync(STORE_FILE, JSON.stringify(store, null, 2)); }
+function audit(actor, action, meta = {}) { store.audit.unshift({ id: crypto.randomUUID(), actor, action, meta, createdAt: now() }); store.audit = store.audit.slice(0, 200); saveStore(); }
+async function pteroFetch(endpoint, options = {}) {
+  if (!pteroConfigured) throw new Error('PTERODACTYL_NOT_CONFIGURED');
+  const response = await fetch(`${PTERO_URL}/api/client/servers/${encodeURIComponent(PTERO_SERVER)}${endpoint}`, { ...options, headers: { Accept: 'Application/vnd.pterodactyl.v1+json', 'Content-Type': 'application/json', Authorization: `Bearer ${PTERO_KEY}`, ...(options.headers || {}) } });
+  const text = await response.text();
+  let body = {}; try { body = text ? JSON.parse(text) : {}; } catch { body = { raw: text }; }
+  if (!response.ok) { const error = new Error(body.errors?.[0]?.detail || `PTERODACTYL_HTTP_${response.status}`); error.status = response.status; throw error; }
+  return body;
+}
+function pteroPath(value) { const clean = String(value || '/').replace(/\\/g, '/'); return clean.startsWith('/') ? clean : `/${clean}`; }
+function safePath(relative = '.') {
+  const target = path.resolve(SERVER_ROOT, relative);
+  if (target !== SERVER_ROOT && !target.startsWith(`${SERVER_ROOT}${path.sep}`)) throw new Error('Path outside server sandbox');
+  return target;
+}
+function publicSettings() {
+  return { qris: { enabled: store.settings.qris.enabled, merchantName: store.settings.qris.merchantName, hasQr: Boolean(store.settings.qris.qrImageData), instructions: store.settings.qris.instructions }, server: { ...store.settings.server, pterodactylConfigured: pteroConfigured, identifier: pteroConfigured ? PTERO_SERVER : undefined }, baileys: { ...store.baileys, qrImage: undefined } };
+}
+function requireAuth(req, res, next) { const session = readSession(req); const user = session && store.users.find(u => u.id === session.id); if (!user) return res.status(401).json({ error: 'UNAUTHORIZED' }); req.user = user; next(); }
+function requireOwner(req, res, next) { requireAuth(req, res, () => req.user.role === 'owner' ? next() : res.status(403).json({ error: 'OWNER_ONLY' })); }
+
+app.disable('x-powered-by');
+app.use(express.json({ limit: '2mb' }));
+app.use(express.static(path.join(ROOT, 'dist')));
+
+const attempts = new Map();
+app.post('/api/auth/login', (req, res) => {
+  const ip = req.ip || 'unknown'; const record = attempts.get(ip) || { count: 0, reset: Date.now() + 60000 };
+  if (record.reset < Date.now()) { record.count = 0; record.reset = Date.now() + 60000; }
+  if (record.count >= 8) return res.status(429).json({ error: 'TOO_MANY_ATTEMPTS' });
+  const { username, password } = req.body || {}; const user = store.users.find(u => u.username === String(username || '').trim());
+  if (!user || !verifyPassword(String(password || ''), user.passwordHash)) { record.count++; attempts.set(ip, record); return res.status(401).json({ error: 'INVALID_CREDENTIALS' }); }
+  attempts.delete(ip); res.cookie(COOKIE, createSession(user), { httpOnly: true, secure: isProd, sameSite: 'strict', path: '/', maxAge: 43200000 }); audit(user.username, 'auth.login'); res.json({ user: { username: user.username, role: user.role } });
+});
+app.post('/api/auth/logout', requireAuth, (req, res) => { audit(req.user.username, 'auth.logout'); res.clearCookie(COOKIE, { httpOnly: true, secure: isProd, sameSite: 'strict', path: '/' }); res.json({ ok: true }); });
+app.get('/api/auth/me', requireAuth, (req, res) => res.json({ user: { username: req.user.username, role: req.user.role } }));
+
+app.get('/api/overview', requireAuth, (req, res) => res.json({ settings: publicSettings(), servers: store.servers.map(({ providerUrl, apiKey, ...safe }) => safe), payments: store.payments.map(p => ({ ...p, proofImageData: undefined })), audit: store.audit.slice(0, 30) }));
+app.get('/api/files', requireOwner, async (req, res) => { try { const requested = pteroPath(req.query.path); if (pteroConfigured) { const body = await pteroFetch(`/files/list-directory?directory=${encodeURIComponent(requested)}`); return res.json({ path: requested, entries: (body.data || []).map(item => ({ name: item.attributes.name, type: item.attributes.is_file ? 'file' : 'directory', size: item.attributes.size })) }); } const dir = safePath(req.query.path || '.'); const entries = fs.readdirSync(dir, { withFileTypes: true }).map(e => ({ name: e.name, type: e.isDirectory() ? 'directory' : 'file', size: e.isFile() ? fs.statSync(path.join(dir, e.name)).size : undefined })); res.json({ path: path.relative(SERVER_ROOT, dir) || '.', entries }); } catch (e) { res.status(e.status || 400).json({ error: e.message }); } });
+app.post('/api/files/folder', requireOwner, async (req, res) => { try { const requested = pteroPath(req.body.path); if (pteroConfigured) { const parent = path.posix.dirname(requested); const name = path.posix.basename(requested); await pteroFetch('/files/create-folder', { method: 'POST', body: JSON.stringify({ root: parent === '/' ? '/' : parent, name }) }); audit(req.user.username, 'files.mkdir', { path: requested, provider: 'pterodactyl' }); return res.json({ ok: true }); } const target = safePath(req.body.path); fs.mkdirSync(target, { recursive: true }); audit(req.user.username, 'files.mkdir', { path: req.body.path }); res.json({ ok: true }); } catch (e) { res.status(e.status || 400).json({ error: e.message }); } });
+app.delete('/api/files', requireOwner, async (req, res) => { try { const requested = pteroPath(req.body.path); if (pteroConfigured) { await pteroFetch('/files/delete', { method: 'POST', body: JSON.stringify({ root: path.posix.dirname(requested), files: [path.posix.basename(requested)] }) }); audit(req.user.username, 'files.delete', { path: requested, provider: 'pterodactyl' }); return res.json({ ok: true }); } const target = safePath(req.body.path); if (target === SERVER_ROOT) throw new Error('Cannot delete server root'); fs.rmSync(target, { recursive: true, force: true }); audit(req.user.username, 'files.delete', { path: req.body.path }); res.json({ ok: true }); } catch (e) { res.status(e.status || 400).json({ error: e.message }); } });
+
+const allowedActions = new Set(['start', 'stop', 'restart']);
+app.post('/api/server/action', requireOwner, async (req, res) => { const action = String(req.body.action || ''); if (!allowedActions.has(action)) return res.status(400).json({ error: 'ACTION_NOT_ALLOWED' }); try { if (pteroConfigured) await pteroFetch('/power', { method: 'POST', body: JSON.stringify({ signal: action }) }); store.settings.server.status = action === 'stop' ? 'offline' : 'online'; audit(req.user.username, `server.${action}`, { provider: pteroConfigured ? 'pterodactyl' : 'local-fallback' }); res.json({ ok: true, status: store.settings.server.status, provider: pteroConfigured ? 'pterodactyl' : 'local-fallback' }); } catch (e) { res.status(e.status || 502).json({ error: e.message }); } });
+app.get('/api/server/resources', requireOwner, async (req, res) => { try { const body = await pteroFetch('/resources'); res.json(body); } catch (e) { res.status(e.status || 502).json({ error: e.message }); } });
+app.post('/api/server/startup', requireOwner, async (req, res) => { const command = String(req.body.command || '').trim(); const image = String(req.body.image || '').trim(); if (!command || command.length > 300 || /[;&|`$<>]/.test(command)) return res.status(400).json({ error: 'STARTUP_COMMAND_REJECTED' }); try { if (pteroConfigured) await pteroFetch('/startup', { method: 'PATCH', body: JSON.stringify({ startup: command, image }) }); store.settings.server.startup = { command, image, updatedAt: now() }; audit(req.user.username, 'server.startup.update', { provider: pteroConfigured ? 'pterodactyl' : 'local-fallback' }); res.json({ ok: true, startup: store.settings.server.startup }); } catch (e) { res.status(e.status || 502).json({ error: e.message }); } });
+
+app.put('/api/settings/qris', requireOwner, (req, res) => { const { enabled, merchantName, qrImageData, instructions } = req.body || {}; if (qrImageData && (!String(qrImageData).startsWith('data:image/') || String(qrImageData).length > 1500000)) return res.status(400).json({ error: 'QR_IMAGE_INVALID' }); store.settings.qris = { enabled: Boolean(enabled), merchantName: String(merchantName || '').slice(0, 120), qrImageData: qrImageData ? String(qrImageData) : store.settings.qris.qrImageData, instructions: String(instructions || '').slice(0, 500) }; audit(req.user.username, 'settings.qris.update', { enabled: store.settings.qris.enabled, hasQr: Boolean(store.settings.qris.qrImageData) }); res.json({ ok: true, qris: publicSettings().qris }); });
+app.post('/api/payments', requireAuth, (req, res) => { const { amount, reference } = req.body || {}; const numeric = Number(amount); if (!Number.isInteger(numeric) || numeric <= 0 || numeric > 100000000) return res.status(400).json({ error: 'INVALID_AMOUNT' }); const payment = { id: crypto.randomUUID(), username: req.user.username, amount: numeric, reference: String(reference || '').slice(0, 100), status: 'pending', createdAt: now() }; store.payments.unshift(payment); audit(req.user.username, 'payment.create', { amount: numeric }); res.status(201).json({ payment }); });
+
+app.get('/api/baileys/session', requireOwner, (req, res) => res.json({ ...store.baileys, qrImage: undefined, note: 'Baileys must run in a separate worker with encrypted auth state; this panel exposes status only.' }));
+app.post('/api/baileys/session/reset', requireOwner, (req, res) => { store.baileys = { status: 'disconnected', phone: '', lastEventAt: now(), qrAvailable: false }; audit(req.user.username, 'baileys.session.reset'); res.json({ ok: true, status: store.baileys.status }); });
+
+app.get('*', (req, res) => res.sendFile(path.join(ROOT, 'dist', 'index.html')));
+app.listen(PORT, '127.0.0.1', () => console.log(`NixFlow local server listening on port ${PORT}`));
