@@ -5,7 +5,8 @@
   "description": "NixFlow Shop Panel MVP - secure owner operations for Baileys and managed servers",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "npm run build && NODE_ENV=development node server/index.cjs",
+    "dev:ui": "vite",
     "build": "vite build",
     "start": "node server/index.cjs",
     "preview": "vite preview"

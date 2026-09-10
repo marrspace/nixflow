@@ -44,7 +44,8 @@ function readSession(req) {
   const raw = req.headers.cookie?.split(';').map(v => v.trim()).find(v => v.startsWith(`${COOKIE}=`))?.slice(COOKIE.length + 1);
   if (!raw) return null;
   const [payload, signature] = raw.split('.');
-  if (!payload || !signature || !crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(sign(payload)))) return null;
+  const expected = payload ? sign(payload) : '';
+  if (!payload || !signature || signature.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return null;
   try {
     const parsed = JSON.parse(Buffer.from(payload, 'base64url').toString());
     if (!parsed.exp || parsed.exp < Date.now()) return null;
@@ -98,11 +99,12 @@ app.post('/api/auth/login', (req, res) => {
   if (record.reset < Date.now()) { record.count = 0; record.reset = Date.now() + 60000; }
   if (record.count >= 8) return res.status(429).json({ error: 'TOO_MANY_ATTEMPTS' });
   const { username, password } = req.body || {}; const user = store.users.find(u => u.username === String(username || '').trim());
-  if (!user || !verifyPassword(String(password || ''), user.passwordHash)) { record.count++; attempts.set(ip, record); return res.status(401).json({ error: 'INVALID_CREDENTIALS' }); }
-  attempts.delete(ip); res.cookie(COOKIE, createSession(user), { httpOnly: true, secure: isProd, sameSite: 'strict', path: '/', maxAge: 43200000 }); audit(user.username, 'auth.login'); res.json({ user: { username: user.username, role: user.role } });
+  if (!user || !verifyPassword(String(password || ''), user.passwordHash)) { record.count++; attempts.set(ip, record); console.warn('[auth] login_failed', { username: String(username || '').trim().slice(0, 80), ip, at: now() }); return res.status(401).json({ error: 'INVALID_CREDENTIALS' }); }
+  attempts.delete(ip); res.cookie(COOKIE, createSession(user), { httpOnly: true, secure: isProd, sameSite: 'strict', path: '/', maxAge: 43200000 }); audit(user.username, 'auth.login', { ip }); console.info('[auth] login_success', { username: user.username, ip, at: now() }); res.json({ user: { username: user.username, role: user.role } });
 });
 app.post('/api/auth/logout', requireAuth, (req, res) => { audit(req.user.username, 'auth.logout'); res.clearCookie(COOKIE, { httpOnly: true, secure: isProd, sameSite: 'strict', path: '/' }); res.json({ ok: true }); });
 app.get('/api/auth/me', requireAuth, (req, res) => res.json({ user: { username: req.user.username, role: req.user.role } }));
+app.get('/api/audit', requireOwner, (req, res) => res.json({ entries: store.audit.slice(0, 100) }));
 
 app.get('/api/overview', requireAuth, (req, res) => res.json({ settings: publicSettings(), servers: store.servers.map(({ providerUrl, apiKey, ...safe }) => safe), payments: store.payments.map(p => ({ ...p, proofImageData: undefined })), audit: store.audit.slice(0, 30) }));
 app.get('/api/files', requireOwner, async (req, res) => { try { const requested = pteroPath(req.query.path); if (pteroConfigured) { const body = await pteroFetch(`/files/list-directory?directory=${encodeURIComponent(requested)}`); return res.json({ path: requested, entries: (body.data || []).map(item => ({ name: item.attributes.name, type: item.attributes.is_file ? 'file' : 'directory', size: item.attributes.size })) }); } const dir = safePath(req.query.path || '.'); const entries = fs.readdirSync(dir, { withFileTypes: true }).map(e => ({ name: e.name, type: e.isDirectory() ? 'directory' : 'file', size: e.isFile() ? fs.statSync(path.join(dir, e.name)).size : undefined })); res.json({ path: path.relative(SERVER_ROOT, dir) || '.', entries }); } catch (e) { res.status(e.status || 400).json({ error: e.message }); } });

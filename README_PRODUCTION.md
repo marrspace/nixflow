@@ -10,6 +10,10 @@ npm run build
 OWNER_USERNAME=marr OWNER_INITIAL_PASSWORD=marnull NIXFLOW_SESSION_SECRET="ganti-dengan-random-64-char" npm start
 ```
 
+Untuk pengujian lokal dengan frontend dan API sekaligus, gunakan `npm run dev`. Script ini melakukan build lalu menjalankan Express pada port `8787`; `npm run dev:ui` hanya menjalankan Vite dan tidak menyediakan API login.
+
+Tidak ada public registration route pada MVP ini. Owner dibuat otomatis pada first run dari `OWNER_USERNAME` dan `OWNER_INITIAL_PASSWORD`. Log login berhasil/gagal tampil di terminal backend tanpa pernah mencetak password. Audit terstruktur dapat dibaca owner melalui `GET /api/audit` setelah login.
+
 Server hanya bind ke `127.0.0.1` secara default. Frontend tidak mengetahui URL provider, API key, atau port remote; semua request memakai path relatif `/api/*` dengan session cookie `httpOnly`, `sameSite=strict`, dan `secure` saat `NODE_ENV=production`.
 
 ## Yang diubah
