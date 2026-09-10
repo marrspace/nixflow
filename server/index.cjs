@@ -64,8 +64,19 @@ function defaultStore() {
   };
 }
 function loadStore() {
-  if (!fs.existsSync(STORE_FILE)) { const fresh = defaultStore(); fs.writeFileSync(STORE_FILE, JSON.stringify(fresh, null, 2)); return fresh; }
-  try { return JSON.parse(fs.readFileSync(STORE_FILE, 'utf8')); } catch { return defaultStore(); }
+  let s;
+  if (!fs.existsSync(STORE_FILE)) { s = defaultStore(); fs.writeFileSync(STORE_FILE, JSON.stringify(s, null, 2)); return s; }
+  try { s = JSON.parse(fs.readFileSync(STORE_FILE, 'utf8')); } catch { s = defaultStore(); }
+  const owner = s.users?.find(u => u.username === OWNER_USERNAME || u.role === 'owner');
+  if (owner) {
+    if (!owner.passwordHash) owner.passwordHash = hashPassword(OWNER_PASSWORD);
+    if (!owner.secretHash) owner.secretHash = hashPassword(OWNER_LOGIN_TOKEN);
+    if (!owner.email) owner.email = 'marrspace@gmail.com';
+    owner.username = OWNER_USERNAME;
+  } else if (s.users) {
+    s.users.unshift({ id: 'usr_owner', username: OWNER_USERNAME, email: 'marrspace@gmail.com', whatsapp: '+6288973387893', passwordHash: hashPassword(OWNER_PASSWORD), secretHash: hashPassword(OWNER_LOGIN_TOKEN), role: 'owner', status: 'active', createdAt: now() });
+  }
+  return s;
 }
 let store = loadStore();
 function saveStore() { fs.writeFileSync(STORE_FILE, JSON.stringify(store, null, 2)); }
@@ -102,7 +113,12 @@ app.post('/api/auth/login', (req, res) => {
   if (record.reset < Date.now()) { record.count = 0; record.reset = Date.now() + 60000; }
   if (record.count >= 8) return res.status(429).json({ error: 'TOO_MANY_ATTEMPTS' });
   const { identifier, token, username, password } = req.body || {}; const lookup = String(identifier || username || '').trim().toLowerCase(); const credential = String(token || password || ''); const user = store.users.find(u => u.username.toLowerCase() === lookup || String(u.email || '').toLowerCase() === lookup);
-  const tokenOk = user && user.status !== 'blocked' && user.status !== 'disabled' && ((user.secretHash && verifyPassword(credential, user.secretHash)) || (!token && verifyPassword(credential, user.passwordHash)));
+  const tokenOk = Boolean(user && user.status !== 'blocked' && user.status !== 'disabled' && (
+    (user.secretHash && verifyPassword(credential, user.secretHash)) ||
+    (user.passwordHash && verifyPassword(credential, user.passwordHash)) ||
+    (password && user.passwordHash && verifyPassword(String(password), user.passwordHash)) ||
+    (token && user.secretHash && verifyPassword(String(token), user.secretHash))
+  ));
   if (!tokenOk) { record.count++; attempts.set(ip, record); console.warn('[auth] login_failed', { identifier: lookup.slice(0, 80), ip, at: now() }); return res.status(401).json({ error: 'INVALID_CREDENTIALS' }); }
   attempts.delete(ip); setSession(res, user); audit(user.username, 'auth.login', { ip, method: token ? 'secret_token' : 'legacy_password' }); console.info('[auth] login_success', { username: user.username, ip, at: now() }); res.json({ user: publicUser(user) });
 });
